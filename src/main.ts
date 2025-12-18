@@ -1,6 +1,6 @@
 import {
   print,
-  fileToBuffer, Item, sessionStorage, cliExecute
+  fileToBuffer, Item, sessionStorage, cliExecute, gametimeToInt, waitq
 } from "kolmafia";
 
 import {
@@ -171,6 +171,10 @@ export default function main(sender: string, message: string, channel: string): 
       processKmail(kmail)
       print("-------------------------------------------------------------------")
     }
+  }
+  if (86400000 - gametimeToInt() < 180000) {
+    waitq(900); // sleep 15 minutes
+    cliExecute("login TinkerTailorSolderFry");
   }
 
 }
