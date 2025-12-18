@@ -1,6 +1,6 @@
 import {
   print,
-  craft, use, fileToBuffer, Item, sessionStorage
+  fileToBuffer, Item, sessionStorage, cliExecute
 } from "kolmafia";
 
 import {
@@ -15,43 +15,110 @@ function returnItems(kmail: Kmail, message: string) {
   )
   kmail.delete()
 }
+
+type RecipePlanStep = {
+  recipe: Recipe,
+  quantity: number,
+}
+
+type Ingredient = {
+  ingredient: Item,
+  quantity: number,
+}
+
+type ChooseRecipesOutput = {
+  recipePlan: RecipePlanStep[],
+  output: Ingredient[],
+}
+
+function chooseRecipes(ingredients: Ingredient[]): ChooseRecipesOutput {
+  const plausibleRecipeSteps: RecipePlanStep[] = []
+  for (const { ingredient } of ingredients) {
+    const recipesForIngredient = recipesByIngredient.get(ingredient.name) || []
+    for (let recipe of recipesForIngredient) {
+      if (!plausibleRecipeSteps.some(existingRecipeStep => existingRecipeStep.recipe.id === recipe.id))
+        if (recipe.inputs.every(input => ingredients.some(ingredient => ingredient.ingredient.name === input))) {
+          const quantities = ingredients
+            .filter(ingredient => recipe.inputs.some(input => ingredient.ingredient.name === input))
+            .map(ingredient => ingredient.quantity)
+          plausibleRecipeSteps.push({ recipe, quantity: Math.min(...quantities) })
+        }
+    }
+  }
+
+
+  if (!plausibleRecipeSteps.length) {
+    return {
+      recipePlan: [] as RecipePlanStep[],
+      output: ingredients
+    }
+  }
+  plausibleRecipeSteps.sort((a, b) => b.quantity - a.quantity)
+  const selectedRecipeStep = plausibleRecipeSteps[0]
+  const newIngredients: Ingredient[] = []
+  for (let i = 0; i < ingredients.length; i++) {
+    const ingredient = ingredients[i]
+    if (selectedRecipeStep.recipe.inputs.includes(ingredient.ingredient.name)) {
+      if (ingredient.quantity > selectedRecipeStep.quantity) {
+        newIngredients.push({ ingredient: ingredient.ingredient, quantity: ingredient.quantity - selectedRecipeStep.quantity }
+        )
+      }
+    } else {
+      newIngredients.push(ingredient)
+    }
+  }
+
+  newIngredients.push({ ingredient: $item`${selectedRecipeStep.recipe.output}`, quantity: selectedRecipeStep.quantity })
+
+  const recursiveStep = chooseRecipes(newIngredients)
+  return {
+    recipePlan: [selectedRecipeStep].concat(recursiveStep.recipePlan),
+    output: recursiveStep.output
+  }
+}
+
+
 function processKmail(kmail: Kmail) {
 
-  print("+-------------------------------------------------------------------")
-  print(`| Started processing kmail from ${kmail.senderName}`)
+  print("-------------------------------------------------------------------")
+  print(`Started processing kmail from ${kmail.senderName}`)
   const items: Map<Item, number> = kmail.items();
   const spookies: number = items.has($item`spooky nuggets`) ? items.get($item`spooky nuggets`) as number : 0;
   const ingredients = Array.from(items.entries())
     .filter(([item, _quantity]) => !$items`spooky nuggets`.includes(item))
 
 
-  print(`| Recieved ${spookies} handful${spookies !== 1 ? "s" : ""} of spooky nuggets`)
-  print(`| Ingredients:`)
-  if (!ingredients.length) print("|  - None found")
-  ingredients.map(([item, quantity]) => print(`|  - ${item.name} x ${quantity}`))
+  print(`Recieved ${spookies} handful${spookies !== 1 ? "s" : ""} of spooky nuggets`)
+  print(`Ingredients:`)
+  if (!ingredients.length) print("- None found")
+  ingredients.map(([item, quantity]) => print(`- ${item.name} x ${quantity}`))
 
-  if (ingredients.length !== 2) {
-    print("| Recieved wrong quantity of ingredients, aborting.")
-    returnItems(kmail, "I currently only know how to handle two-ingredient recipes. Here are your items back.");
-    return;
+  const recipesToAttempt = chooseRecipes(ingredients.map(([ingredient, quantity]) => ({ ingredient, quantity })))
+  if (!recipesToAttempt.recipePlan.length) {
+    returnItems(kmail, "I couldn't find any recipes that are made with those ingredients. If you believe this is incorrect, please send a message to Phillammon (#2393910) explaining what you were trying to do.")
+    return
+  }
+  print("Crafting Plan:")
+  for (const recipeStep of recipesToAttempt.recipePlan) {
+    print(`- Make ${recipeStep.recipe.output} x ${recipeStep.quantity} via ${JSON.stringify(recipeStep.recipe.method)} from ${recipeStep.recipe.inputs.map(input => `${input} x${recipeStep.quantity}`).join(", ")}`)
+  }
+  print("Final Outputs:")
+  for (const output of recipesToAttempt.output) {
+    print(`- ${output.ingredient.name} x ${output.quantity}`)
   }
 
-
-  const plausibleRecipes: Recipe[] = []
-  for (const [ingredient, quantity] of ingredients) {
-    const recipesForIngredient = recipesByIngredient.get(ingredient.name) || []
+  for (const recipeStep of recipesToAttempt.recipePlan) {
+    cliExecute(`refresh inventory`)
+    cliExecute(`create ${recipeStep.quantity} ${recipeStep.recipe.output}`)
   }
 
-  print("| Plausible recipes: ")
-  if (!plausibleRecipes.length) print("|  - None found")
-  for (const recipe of plausibleRecipes) {
-    print(`|  - Make ${recipe.output} via ${JSON.stringify(recipe.method)}`)
-    print(`|    Requires: `)
-    recipe.inputs.map(item => print(`|    - ${item}`))
-  }
-
-
-  returnItems(kmail, "Thank you for helping test TinkerTailorSolderFry!")
+  kmail.reply(
+    "Tinkered successfully! Enjoy your items!",
+    new Map(recipesToAttempt.output.map(({ ingredient, quantity }) => [ingredient, quantity]))
+  )
+  kmail.delete()
+  cliExecute(`use * spooky nuggets`)
+  return
 
 }
 
@@ -102,6 +169,7 @@ export default function main(sender: string, message: string, channel: string): 
     const inbox = Kmail.inbox()
     for (let kmail of inbox) {
       processKmail(kmail)
+      print("-------------------------------------------------------------------")
     }
   }
 
