@@ -155,7 +155,7 @@ function loadConcoctions() {
     return
   }
   let buffer = fileToBuffer("data/concoctions.txt")
-  const lines = buffer.split("\n").filter(line => !(`${line}`.startsWith("#") || line.length === 0))
+  const lines = buffer.split("\n").filter((line: string) => !(`${line}`.startsWith("#") || line.length === 0))
   for (const line of lines) {
     processConcoctionLine(line)
   }
@@ -164,17 +164,12 @@ function loadConcoctions() {
 
 
 export default function main(sender: string, message: string, channel: string): void {
-  if (channel == "Events") {
+  const inbox = Kmail.inbox()
+  if (inbox.length) {
     loadConcoctions();
-    const inbox = Kmail.inbox()
     for (let kmail of inbox) {
       processKmail(kmail)
       print("-------------------------------------------------------------------")
     }
   }
-  if (86400000 - gametimeToInt() < 180000) {
-    waitq(900); // sleep 15 minutes
-    cliExecute("login TinkerTailorSolderFry");
-  }
-
 }
